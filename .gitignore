@@ -21,3 +21,6 @@ env/
 # IDE
 .vscode/
 .idea/
+
+# Runtime data
+volumes/
