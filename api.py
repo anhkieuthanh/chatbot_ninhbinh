@@ -35,7 +35,23 @@ VALID_DOC_TYPES = {
     "support", "event", "craft_village", "virtual_guide"
 }
 
+def validate_milvus_uri(uri: str) -> str:
+    """Chỉ chấp nhận Milvus Service qua HTTP/HTTPS, không dùng Milvus Lite (.db)."""
+    cleaned = (uri or "").strip()
+    if not cleaned:
+        raise RuntimeError("Thiếu MILVUS_URI. Ví dụ: http://localhost:19530")
+    if cleaned.endswith(".db"):
+        raise RuntimeError(
+            f"MILVUS_URI không hợp lệ: '{cleaned}'. Dự án chỉ hỗ trợ Milvus Service, không dùng Milvus Lite."
+        )
+    if not (cleaned.startswith("http://") or cleaned.startswith("https://")):
+        raise RuntimeError(
+            f"MILVUS_URI không hợp lệ: '{cleaned}'. Chỉ chấp nhận URL Milvus Service dạng http(s)://host:port."
+        )
+    return cleaned
+
 # ── Kết nối Milvus (khởi tạo 1 lần khi server bắt đầu) ──────────────────────
+MILVUS_URI = validate_milvus_uri(MILVUS_URI)
 milvus_client = MilvusClient(uri=MILVUS_URI, token=MILVUS_TOKEN)
 
 # ── FastAPI App ───────────────────────────────────────────────────────────────

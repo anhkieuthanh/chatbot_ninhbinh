@@ -100,11 +100,26 @@ def get_embeddings(texts):
         print(f"Error from NVIDIA API: {resp.text}")
         return []
 
+def validate_milvus_uri(uri: str) -> str:
+    """Chỉ chấp nhận Milvus Service qua HTTP/HTTPS, không dùng Milvus Lite (.db)."""
+    cleaned = (uri or "").strip()
+    if not cleaned:
+        raise ValueError("Thiếu MILVUS_URI. Ví dụ: http://localhost:19530")
+    if cleaned.endswith(".db"):
+        raise ValueError(
+            f"MILVUS_URI không hợp lệ: '{cleaned}'. Dự án chỉ hỗ trợ Milvus Service, không dùng Milvus Lite."
+        )
+    if not (cleaned.startswith("http://") or cleaned.startswith("https://")):
+        raise ValueError(
+            f"MILVUS_URI không hợp lệ: '{cleaned}'. Chỉ chấp nhận URL Milvus Service dạng http(s)://host:port."
+        )
+    return cleaned
+
 def main():
     collection_name = "ninhbinh_kb"
 
     # 1. Setup DB
-    MILVUS_URI = os.environ.get("MILVUS_URI", "http://localhost:19530")
+    MILVUS_URI = validate_milvus_uri(os.environ.get("MILVUS_URI", "http://localhost:19530"))
     MILVUS_TOKEN = os.environ.get("MILVUS_TOKEN", "")
     client = MilvusClient(uri=MILVUS_URI, token=MILVUS_TOKEN)
 

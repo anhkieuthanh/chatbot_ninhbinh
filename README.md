@@ -28,6 +28,7 @@ chatbot/
 ## ⚙️ Yêu cầu
 
 - Python **3.10+**
+- Milvus chạy dạng **service** (Docker)
 - Các thư viện cần thiết:
 
 ```bash
@@ -47,6 +48,18 @@ MILVUS_TOKEN=
 ```
 
 > Lấy API key miễn phí tại: [https://build.nvidia.com](https://build.nvidia.com)
+> Dự án chỉ hỗ trợ Milvus Service qua `MILVUS_URI` (không dùng Milvus Lite `.db`).
+
+---
+
+## 🐳 Chạy Milvus Service
+
+```bash
+# Đứng tại thư mục chatbot/
+docker compose up -d
+```
+
+Milvus service mặc định lắng nghe tại `http://localhost:19530`.
 
 ---
 

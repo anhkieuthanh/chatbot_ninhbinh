@@ -49,7 +49,7 @@ rsync -avz \
   --exclude='__pycache__' \
   --exclude='.git' \
   --exclude='*.pyc' \
-  --exclude='.chatbot.db.lock' \
+  --exclude='volumes' \
   ${SSH_KEY:+-e "ssh -i $SSH_KEY"} \
   "$(dirname "$0")/" \
   "$VPS_USER@$VPS_IP:$REMOTE_DIR/"
