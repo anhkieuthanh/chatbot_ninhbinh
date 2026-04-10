@@ -24,7 +24,8 @@ API_KEY        = os.environ.get("EMBEDED_API_KEY")
 NVIDIA_URL     = "https://integrate.api.nvidia.com/v1/embeddings"
 NVIDIA_MODEL   = "nvidia/nv-embedqa-e5-v5"
 COLLECTION     = "ninhbinh_kb"
-DB_PATH        = os.path.join(script_dir, "chatbot.db")
+MILVUS_URI     = os.environ.get("MILVUS_URI", "http://localhost:19530")
+MILVUS_TOKEN   = os.environ.get("MILVUS_TOKEN", "")
 DEFAULT_TOP_K  = 5
 
 # Các loại nội dung hợp lệ
@@ -35,7 +36,7 @@ VALID_DOC_TYPES = {
 }
 
 # ── Kết nối Milvus (khởi tạo 1 lần khi server bắt đầu) ──────────────────────
-milvus_client = MilvusClient(DB_PATH)
+milvus_client = MilvusClient(uri=MILVUS_URI, token=MILVUS_TOKEN)
 
 # ── FastAPI App ───────────────────────────────────────────────────────────────
 app = FastAPI(

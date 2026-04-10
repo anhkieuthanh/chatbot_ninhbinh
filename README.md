@@ -1,7 +1,7 @@
 # 🏔️ Ninh Bình RAG API
 
 Hệ thống tra cứu thông tin du lịch Ninh Bình sử dụng kiến trúc **RAG (Retrieval-Augmented Generation)**.  
-Dữ liệu được crawl từ [dulichninhbinh.com.vn](https://dulichninhbinh.com.vn), nhúng vector bằng **NVIDIA NIM API**, lưu trữ tại **Milvus Lite** và phục vụ qua **FastAPI**.
+Dữ liệu được crawl từ [dulichninhbinh.com.vn](https://dulichninhbinh.com.vn), nhúng vector bằng **NVIDIA NIM API**, lưu trữ tại **Milvus Service** và phục vụ qua **FastAPI**.
 
 ---
 
@@ -15,7 +15,6 @@ chatbot/
 │   ├── destination/
 │   ├── entertainment/
 │   └── ...
-├── chatbot.db        # Vector database (Milvus Lite)
 ├── main.py           # Pipeline: Chunking → Embedding → Insert DB
 ├── api.py            # FastAPI server (REST API)
 ├── retrieve.py       # CLI tool tìm kiếm thử qua terminal (gọi qua API)
@@ -32,7 +31,7 @@ chatbot/
 - Các thư viện cần thiết:
 
 ```bash
-pip install fastapi uvicorn pymilvus[milvus-lite] requests
+pip install fastapi uvicorn pymilvus requests
 ```
 
 ---
@@ -43,6 +42,8 @@ Tạo file `.env` trong thư mục `chatbot/`:
 
 ```env
 EMBEDED_API_KEY=nvapi-xxxxxxxxxxxxxxxxxxxxxx
+MILVUS_URI=http://localhost:19530
+MILVUS_TOKEN=
 ```
 
 > Lấy API key miễn phí tại: [https://build.nvidia.com](https://build.nvidia.com)
@@ -166,17 +167,9 @@ curl -X POST http://localhost:8000/search \
 
 ## 🗄️ Tái tạo Database
 
-> ⚠️ **Phải tắt server trước** — Milvus Lite không cho phép 2 tiến trình truy cập DB cùng lúc.
-
 ```bash
-# 1. Tắt server
-pkill -f "uvicorn api:app"
-
-# 2. Rebuild DB (từ thư mục gốc)
+# 1. Rebuild DB (từ thư mục gốc)
 python3 chatbot/main.py
-
-# 3. Khởi động lại server
-python3 -m uvicorn api:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 > Xem chi tiết quá trình xử lý trong [PIPELINE.md](./PIPELINE.md).

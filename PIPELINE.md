@@ -19,10 +19,10 @@ raw_data/**/*.json
   [Bước 3] Embedding (NVIDIA NIM API)
        │  text → vector[1024 chiều]
        ▼
-  [Bước 4] Insert vào Milvus Lite DB
-       │  vector + metadata → chatbot.db
+  [Bước 4] Insert vào Milvus Service DB
+       │  vector + metadata → Milvus Service
        ▼
-  chatbot.db → collection: ninhbinh_kb (596 records)
+  Milvus Service → collection: ninhbinh_kb (596 records)
 ```
 
 ---
@@ -32,7 +32,9 @@ raw_data/**/*.json
 Trước khi xử lý dữ liệu, script tạo mới collection trong Milvus:
 
 ```python
-client = MilvusClient("chatbot.db")
+MILVUS_URI = os.environ.get("MILVUS_URI", "http://localhost:19530")
+MILVUS_TOKEN = os.environ.get("MILVUS_TOKEN", "")
+client = MilvusClient(uri=MILVUS_URI, token=MILVUS_TOKEN)
 
 if client.has_collection("ninhbinh_kb"):
     client.drop_collection("ninhbinh_kb")   # Xóa cũ nếu đã tồn tại
@@ -258,22 +260,14 @@ client.insert(collection_name="ninhbinh_kb", data=insert_data)
 181 file JSON
   └─ 596 chunks (sentence-aware, max 800 ký tự, overlap 150 ký tự)
        └─ 596 vectors (1024 chiều, model: nvidia/nv-embedqa-e5-v5)
-            └─ 596 records trong collection ninhbinh_kb (chatbot.db)
+           └─ 596 records trong collection ninhbinh_kb (Milvus Service)
 ```
 
 ---
 
 ## Chạy lại pipeline
 
-> ⚠️ **Phải tắt server** trước khi chạy — Milvus Lite không cho phép 2 tiến trình cùng truy cập DB.
-
 ```bash
-# 1. Tắt server
-pkill -f "uvicorn api:app"
-
-# 2. Rebuild DB
+# 1. Rebuild DB
 python3 chatbot/main.py
-
-# 3. Khởi động lại server
-python3 -m uvicorn api:app --host 0.0.0.0 --port 8000 --reload
 ```

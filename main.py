@@ -24,7 +24,7 @@ HEADERS = {
     "Authorization": f"Bearer {API_KEY}",
     "Accept": "application/json"
 }
-MODEL = "nvidia/llama-3.2-nv-embedqa-1b-v2"
+MODEL = "nvidia/nv-embedqa-e5-v5"
 
 CHUNK_MAX_LEN = 800   # Độ dài tối đa mỗi chunk (ký tự)
 CHUNK_OVERLAP = 150   # Số ký tự overlap giữa hai chunk liên tiếp
@@ -104,8 +104,9 @@ def main():
     collection_name = "ninhbinh_kb"
 
     # 1. Setup DB
-    db_path = os.path.join(script_dir, "chatbot.db")
-    client = MilvusClient(db_path)
+    MILVUS_URI = os.environ.get("MILVUS_URI", "http://localhost:19530")
+    MILVUS_TOKEN = os.environ.get("MILVUS_TOKEN", "")
+    client = MilvusClient(uri=MILVUS_URI, token=MILVUS_TOKEN)
 
     if client.has_collection(collection_name):
         client.drop_collection(collection_name)
@@ -117,7 +118,7 @@ def main():
         auto_id=True,
         enable_dynamic_field=True
     )
-    print(f"Collection '{collection_name}' created in: {db_path}")
+    print(f"Collection '{collection_name}' created in: {MILVUS_URI}")
 
     # 2. Process & Chunk dữ liệu
     data_pattern = os.path.join(script_dir, "raw_data", "**", "*.json")
