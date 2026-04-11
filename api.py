@@ -1,195 +1,111 @@
 import os
-import requests
+from typing import List, Optional
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import requests
 from pymilvus import MilvusClient
+from dotenv import load_dotenv
 
-# ── Cấu hình đường dẫn ──────────────────────────────────────────────────────
-script_dir = os.path.dirname(os.path.abspath(__file__))
+# --- CẤU HÌNH ---
+load_dotenv()
 
-# ── Load .env ────────────────────────────────────────────────────────────────
-env_path = os.path.join(script_dir, ".env")
-if os.path.exists(env_path):
-    with open(env_path, "r") as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#"):
-                parts = line.split("=", 1)
-                if len(parts) == 2:
-                    os.environ[parts[0]] = parts[1]
+app = FastAPI(title="Ninh Binh Search API", description="API chuyên dụng để truy vấn dữ liệu từ Vector DB")
 
-# ── Hằng số ──────────────────────────────────────────────────────────────────
-API_KEY        = os.environ.get("EMBEDED_API_KEY")
-NVIDIA_URL     = "https://integrate.api.nvidia.com/v1/embeddings"
-NVIDIA_MODEL   = "nvidia/nv-embedqa-e5-v5"
-COLLECTION     = "ninhbinh_kb"
-MILVUS_URI     = os.environ.get("MILVUS_URI", "http://localhost:19530")
-MILVUS_TOKEN   = os.environ.get("MILVUS_TOKEN", "")
-DEFAULT_TOP_K  = 5
+# Biến môi trường
+API_KEY = os.environ.get("EMBEDED_API_KEY")
+NVIDIA_URL = "https://integrate.api.nvidia.com/v1/embeddings"
+MILVUS_URI = os.environ.get("MILVUS_URI", "http://localhost:19530")
+MILVUS_TOKEN = os.environ.get("MILVUS_TOKEN", "")
+COLLECTION_NAME = "ninhbinh_v2"
 
-# Các loại nội dung hợp lệ
-VALID_DOC_TYPES = {
-    "destination", "cuisine", "festival", "hotel",
-    "tour", "entertainment", "transport", "shopping",
-    "support", "event", "craft_village", "virtual_guide"
-}
+# Khởi tạo Client (Dùng chung kết nối cho toàn bộ ứng dụng)
+client = MilvusClient(uri=MILVUS_URI, token=MILVUS_TOKEN)
 
-def validate_milvus_uri(uri: str) -> str:
-    """Chỉ chấp nhận Milvus Service qua HTTP/HTTPS, không dùng Milvus Lite (.db)."""
-    cleaned = (uri or "").strip()
-    if not cleaned:
-        raise RuntimeError("Thiếu MILVUS_URI. Ví dụ: http://localhost:19530")
-    if cleaned.endswith(".db"):
-        raise RuntimeError(
-            f"MILVUS_URI không hợp lệ: '{cleaned}'. Dự án chỉ hỗ trợ Milvus Service, không dùng Milvus Lite."
-        )
-    if not (cleaned.startswith("http://") or cleaned.startswith("https://")):
-        raise RuntimeError(
-            f"MILVUS_URI không hợp lệ: '{cleaned}'. Chỉ chấp nhận URL Milvus Service dạng http(s)://host:port."
-        )
-    return cleaned
+# --- MODELS ---
 
-# ── Kết nối Milvus (khởi tạo 1 lần khi server bắt đầu) ──────────────────────
-MILVUS_URI = validate_milvus_uri(MILVUS_URI)
-milvus_client = MilvusClient(uri=MILVUS_URI, token=MILVUS_TOKEN)
-
-# ── FastAPI App ───────────────────────────────────────────────────────────────
-app = FastAPI(
-    title="Ninh Bình RAG API",
-    description="API tra cứu thông tin du lịch Ninh Bình bằng Vector Search.",
-    version="1.1.0"
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ── Pydantic Models ───────────────────────────────────────────────────────────
 class SearchRequest(BaseModel):
     query: str
-    top_k: int = DEFAULT_TOP_K
-    doc_type: str | None = None  # Lọc theo chủ đề, VD: "cuisine", "hotel", "destination"
-
-
-class SearchResult(BaseModel):
-    title: str
-    url: str
-    doc_id: str
-    doc_type: str
-    score: float
-    text_preview: str
-
+    category: Optional[str] = None
+    top_k: int = 5
 
 class SearchResponse(BaseModel):
-    query: str
-    doc_type_filter: str | None
-    results: list[SearchResult]
-    total: int
+    score: float
+    text: str
+    title: str
+    category: str
+    url: Optional[str] = None
 
+# --- UTILS ---
 
-# ── Helper: Gọi NVIDIA Embedding API ─────────────────────────────────────────
-def get_query_embedding(query: str) -> list[float]:
+def get_query_embedding(text: str):
+    """Chuyển đổi câu hỏi của người dùng thành vector."""
     headers = {
         "Authorization": f"Bearer {API_KEY}",
-        "Accept": "application/json",
+        "Accept": "application/json"
     }
     payload = {
-        "input": [query],
-        "model": NVIDIA_MODEL,
+        "input": [text],
+        "model": "nvidia/nv-embedqa-e5-v5",
         "encoding_format": "float",
-        "input_type": "query",
-        "truncate": "NONE",
+        "input_type": "query", # Rất quan trọng: Dùng 'query' thay vì 'passage' khi tìm kiếm
+        "truncate": "NONE"
     }
-    resp = requests.post(NVIDIA_URL, headers=headers, json=payload, timeout=15)
-    if resp.status_code == 200:
+    try:
+        resp = requests.post(NVIDIA_URL, headers=headers, json=payload, timeout=15)
+        resp.raise_for_status()
         return resp.json()["data"][0]["embedding"]
-    raise HTTPException(
-        status_code=502,
-        detail=f"NVIDIA API lỗi ({resp.status_code}): {resp.text}"
-    )
+    except Exception as e:
+        print(f"Embedding Error: {e}")
+        return None
 
+# --- ENDPOINTS ---
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
-
-@app.get("/", tags=["Health"])
-def root():
-    """Kiểm tra server đang hoạt động."""
-    return {"status": "ok", "message": "Ninh Bình RAG API đang chạy 🚀"}
-
-
-@app.get("/health", tags=["Health"])
-def health():
-    """Kiểm tra chi tiết trạng thái server và DB."""
-    collections = milvus_client.list_collections()
-    total = 0
-    if COLLECTION in collections:
-        res = milvus_client.query(
-            collection_name=COLLECTION, filter="", output_fields=["count(*)"]
-        )
-        total = res[0].get("count(*)", 0) if res else 0
-    return {
-        "status": "ok",
-        "collection": COLLECTION,
-        "total_chunks": total,
-        "nvidia_model": NVIDIA_MODEL,
-        "available_doc_types": sorted(VALID_DOC_TYPES),
-    }
-
-
-@app.post("/search", response_model=SearchResponse, tags=["Search"])
-def search(body: SearchRequest):
+@app.post("/search", response_model=List[SearchResponse])
+async def search_vector_db(req: SearchRequest):
     """
-    Tìm kiếm thông tin du lịch Ninh Bình.
-
-    - **query**: Câu hỏi hoặc từ khóa tìm kiếm.
-    - **top_k**: Số lượng kết quả trả về (mặc định 5, tối đa 20).
-    - **doc_type**: Lọc theo chủ đề. VD: `cuisine`, `hotel`, `destination`, `festival`, `tour`, `entertainment`, `transport`, `shopping`, `event`, `craft_village`, `virtual_guide`, `support`.
+    Thực hiện tìm kiếm ngữ nghĩa trong Milvus kèm lọc Category.
     """
-    if not body.query.strip():
-        raise HTTPException(status_code=400, detail="Câu hỏi không được để trống.")
-    if body.doc_type and body.doc_type not in VALID_DOC_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"doc_type không hợp lệ: '{body.doc_type}'. Các giá trị hợp lệ: {sorted(VALID_DOC_TYPES)}"
+    # 1. Chuyển Query thành Vector
+    vector = get_query_embedding(req.query)
+    if vector is None:
+        raise HTTPException(status_code=500, detail="Không thể tạo embedding cho câu hỏi.")
+
+    try:
+        # 2. Xây dựng bộ lọc Filter (Milvus Expression)
+        # Nếu có category thì lọc, nếu không thì tìm trên toàn bộ collection
+        filter_expr = f'category == "{req.category}"' if req.category else ""
+
+        # 3. Truy vấn Milvus
+        search_results = client.search(
+            collection_name=COLLECTION_NAME,
+            data=[vector], # Milvus nhận list các vector
+            filter=filter_expr,
+            limit=req.top_k,
+            output_fields=["text", "title", "category", "url"], # Các trường metadata muốn lấy
+            search_params={"metric_type": "COSINE", "params": {"nprobe": 10}}
         )
-    top_k = min(body.top_k, 20)
 
-    # Embed query
-    vector = get_query_embedding(body.query)
+        # 4. Trích xuất và format kết quả
+        final_results = []
+        if search_results:
+            for hit in search_results[0]: # Lấy kết quả của query đầu tiên
+                final_results.append({
+                    "score": hit["distance"],
+                    "text": hit["entity"].get("text"),
+                    "title": hit["entity"].get("title"),
+                    "category": hit["entity"].get("category"),
+                    "url": hit["entity"].get("url")
+                })
+        
+        return final_results
 
-    # Xây dựng filter expression cho Milvus
-    milvus_filter = ""
-    if body.doc_type:
-        milvus_filter = f'doc_type == "{body.doc_type}"'
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Milvus Search Error: {str(e)}")
 
-    # Vector search
-    raw = milvus_client.search(
-        collection_name=COLLECTION,
-        data=[vector],
-        limit=top_k,
-        filter=milvus_filter,
-        output_fields=["title", "url", "doc_id", "doc_type", "text"],
-    )
+@app.get("/health")
+async def health():
+    return {"status": "ready", "collection": COLLECTION_NAME}
 
-    results = []
-    for hit in raw[0]:
-        entity = hit["entity"]
-        results.append(SearchResult(
-            title=entity.get("title", ""),
-            url=entity.get("url", ""),
-            doc_id=entity.get("doc_id", ""),
-            doc_type=entity.get("doc_type", ""),
-            score=round(hit["distance"], 4),
-            text_preview=entity.get("text", "")[:400],
-        ))
-
-    return SearchResponse(
-        query=body.query,
-        doc_type_filter=body.doc_type,
-        results=results,
-        total=len(results)
-    )
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

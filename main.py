@@ -1,107 +1,54 @@
+import glob
+import json
 import os
 import re
-import json
-import glob
+
 import requests
-from pymilvus import MilvusClient
+from pymilvus import DataType, MilvusClient
 
-script_dir = os.path.dirname(os.path.abspath(__file__))
 
-# Load .env
-env_path = os.path.join(script_dir, ".env")
-if os.path.exists(env_path):
-    with open(env_path, "r") as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#"):
-                parts = line.split("=", 1)
-                if len(parts) == 2:
-                    os.environ[parts[0]] = parts[1]
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ENV_PATH = os.path.join(SCRIPT_DIR, ".env")
+RAW_DATA_DIR = os.path.join(SCRIPT_DIR, "raw_data")
 
-API_KEY = os.environ.get("EMBEDED_API_KEY")
-URL = "https://integrate.api.nvidia.com/v1/embeddings"
+
+def load_env_file(path: str) -> None:
+    if not os.path.exists(path):
+        return
+
+    with open(path, "r", encoding="utf-8") as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip())
+
+
+load_env_file(ENV_PATH)
+
+
+API_KEY = os.environ.get("EMBEDED_API_KEY", "").strip()
+NVIDIA_URL = "https://integrate.api.nvidia.com/v1/embeddings"
+NVIDIA_MODEL = "nvidia/nv-embedqa-e5-v5"
+COLLECTION = "ninhbinh_kb"
+MILVUS_URI = os.environ.get("MILVUS_URI", "http://localhost:19530")
+MILVUS_TOKEN = os.environ.get("MILVUS_TOKEN", "")
+
+VECTOR_DIMENSION = 1024
+CHUNK_MAX_LEN = 800
+CHUNK_OVERLAP = 150
+BATCH_SIZE = 20
+
 HEADERS = {
     "Authorization": f"Bearer {API_KEY}",
-    "Accept": "application/json"
+    "Accept": "application/json",
 }
-MODEL = "nvidia/nv-embedqa-e5-v5"
 
-CHUNK_MAX_LEN = 800   # Độ dài tối đa mỗi chunk (ký tự)
-CHUNK_OVERLAP = 150   # Số ký tự overlap giữa hai chunk liên tiếp
+SENTENCE_RE = re.compile(r"(?<=[.!?])\s+|\n{2,}")
 
-# Regex nhận diện ranh giới câu: dấu chấm/hỏi/than + khoảng trắng HOẶC xuống dòng đôi
-_SENTENCE_RE = re.compile(r'(?<=[.!?])\s+|\n{2,}')
-
-def split_sentences(text: str) -> list[str]:
-    """Tách văn bản thành danh sách câu, giữ nguyên nội dung."""
-    parts = _SENTENCE_RE.split(text.strip())
-    return [s.strip() for s in parts if s.strip()]
-
-def chunk_text(text: str,
-               max_len: int = CHUNK_MAX_LEN,
-               overlap: int = CHUNK_OVERLAP) -> list[str]:
-    """
-    Sentence-aware chunking với overlap.
-    - Cắt đúng ranh giới câu (không cắt giữa chừng).
-    - Mỗi chunk mới bắt đầu bằng `overlap` ký tự cuối của chunk trước
-      để giữ ngữ cảnh liên tiếp.
-    """
-    sentences = split_sentences(text)
-    chunks = []
-    curr_sentences: list[str] = []
-    curr_len = 0
-
-    for sent in sentences:
-        sent_len = len(sent)
-
-        # Nếu thêm câu này vượt quá max_len → đóng chunk hiện tại
-        if curr_len + sent_len > max_len and curr_sentences:
-            chunk_text_str = " ".join(curr_sentences)
-            chunks.append(chunk_text_str)
-
-            # Tính overlap: giữ lại các câu cuối sao cho tổng <= overlap ký tự
-            overlap_sentences: list[str] = []
-            overlap_len = 0
-            for s in reversed(curr_sentences):
-                if overlap_len + len(s) <= overlap:
-                    overlap_sentences.insert(0, s)
-                    overlap_len += len(s) + 1
-                else:
-                    break
-
-            curr_sentences = overlap_sentences
-            curr_len = overlap_len
-
-        curr_sentences.append(sent)
-        curr_len += sent_len + 1
-
-    # Chunk cuối còn lại
-    if curr_sentences:
-        chunks.append(" ".join(curr_sentences))
-
-    return chunks if chunks else [text]  # Fallback nếu text quá ngắn
-
-def get_embeddings(texts):
-    if not texts: return []
-    data = {
-        "input": texts,
-        "model": MODEL,
-        "encoding_format": "float",
-        "input_type": "passage",
-        "truncate": "NONE"
-    }
-    resp = requests.post(URL, headers=HEADERS, json=data)
-    if resp.status_code == 200:
-        embeddings = resp.json()["data"]
-        # NVIDIA API returns in order, sort by index just in case
-        embeddings = sorted(embeddings, key=lambda x: x["index"])
-        return [e["embedding"] for e in embeddings]
-    else:
-        print(f"Error from NVIDIA API: {resp.text}")
-        return []
 
 def validate_milvus_uri(uri: str) -> str:
-    """Chỉ chấp nhận Milvus Service qua HTTP/HTTPS, không dùng Milvus Lite (.db)."""
     cleaned = (uri or "").strip()
     if not cleaned:
         raise ValueError("Thiếu MILVUS_URI. Ví dụ: http://localhost:19530")
@@ -115,84 +62,174 @@ def validate_milvus_uri(uri: str) -> str:
         )
     return cleaned
 
-def main():
-    collection_name = "ninhbinh_kb"
 
-    # 1. Setup DB
-    MILVUS_URI = validate_milvus_uri(os.environ.get("MILVUS_URI", "http://localhost:19530"))
-    MILVUS_TOKEN = os.environ.get("MILVUS_TOKEN", "")
-    client = MilvusClient(uri=MILVUS_URI, token=MILVUS_TOKEN)
+def split_sentences(text: str) -> list[str]:
+    parts = SENTENCE_RE.split(text.strip())
+    return [part.strip() for part in parts if part.strip()]
 
-    if client.has_collection(collection_name):
-        client.drop_collection(collection_name)
+
+def chunk_text(text: str, max_len: int = CHUNK_MAX_LEN, overlap: int = CHUNK_OVERLAP) -> list[str]:
+    sentences = split_sentences(text)
+    if not sentences:
+        return [text.strip()] if text.strip() else []
+
+    chunks: list[str] = []
+    current_sentences: list[str] = []
+    current_length = 0
+
+    for sentence in sentences:
+        sentence_length = len(sentence)
+        if current_sentences and current_length + sentence_length > max_len:
+            chunks.append(" ".join(current_sentences))
+
+            overlap_sentences: list[str] = []
+            overlap_length = 0
+            for existing in reversed(current_sentences):
+                projected = overlap_length + len(existing) + (1 if overlap_sentences else 0)
+                if projected > overlap:
+                    break
+                overlap_sentences.insert(0, existing)
+                overlap_length = projected
+
+            current_sentences = overlap_sentences
+            current_length = overlap_length
+
+        current_sentences.append(sentence)
+        current_length += sentence_length + (1 if current_length else 0)
+
+    if current_sentences:
+        chunks.append(" ".join(current_sentences))
+
+    return chunks
+
+
+def get_embeddings(texts: list[str]) -> list[list[float]]:
+    if not texts:
+        return []
+    if not API_KEY:
+        raise RuntimeError("Thiếu EMBEDED_API_KEY trong .env")
+
+    payload = {
+        "input": texts,
+        "model": NVIDIA_MODEL,
+        "encoding_format": "float",
+        "input_type": "passage",
+        "truncate": "NONE",
+    }
+
+    response = requests.post(NVIDIA_URL, headers=HEADERS, json=payload, timeout=30)
+    response.raise_for_status()
+    embeddings = sorted(response.json()["data"], key=lambda item: item["index"])
+    return [item["embedding"] for item in embeddings]
+
+
+def create_collection(client: MilvusClient) -> None:
+    if client.has_collection(COLLECTION):
+        client.drop_collection(COLLECTION)
+
+    schema = client.create_schema(auto_id=True, enable_dynamic_field=False)
+    schema.add_field(field_name="id", datatype=DataType.INT64, is_primary=True)
+    schema.add_field(field_name="vector", datatype=DataType.FLOAT_VECTOR, dim=VECTOR_DIMENSION)
+    schema.add_field(field_name="text", datatype=DataType.VARCHAR, max_length=8192)
+    schema.add_field(field_name="url", datatype=DataType.VARCHAR, max_length=2048)
+    schema.add_field(field_name="title", datatype=DataType.VARCHAR, max_length=1024)
+    schema.add_field(field_name="doc_id", datatype=DataType.VARCHAR, max_length=255)
+    schema.add_field(field_name="doc_type", datatype=DataType.VARCHAR, max_length=100)
+    schema.add_field(field_name="category", datatype=DataType.VARCHAR, max_length=255)
+
+    index_params = client.prepare_index_params()
+    index_params.add_index(field_name="vector", index_type="AUTOINDEX", metric_type="COSINE")
 
     client.create_collection(
-        collection_name=collection_name,
-        dimension=1024,
-        metric_type="COSINE",
-        auto_id=True,
-        enable_dynamic_field=True
+        collection_name=COLLECTION,
+        schema=schema,
+        index_params=index_params,
     )
-    print(f"Collection '{collection_name}' created in: {MILVUS_URI}")
 
-    # 2. Process & Chunk dữ liệu
-    data_pattern = os.path.join(script_dir, "raw_data", "**", "*.json")
-    files = glob.glob(data_pattern, recursive=True)
-    all_data = []
+
+def build_records() -> list[dict]:
+    data_pattern = os.path.join(RAW_DATA_DIR, "**", "*.json")
+    files = sorted(glob.glob(data_pattern, recursive=True))
+    all_records: list[dict] = []
 
     print(f"Found {len(files)} source files.")
 
-    for fpath in files:
-        with open(fpath, "r", encoding="utf-8") as f:
-            data = json.load(f)
+    for file_path in files:
+        with open(file_path, "r", encoding="utf-8") as json_file:
+            data = json.load(json_file)
 
-        title = data.get("title", "")
-        summary = data.get("summary", "")
-        body = data.get("body_text", "")
+        title = data.get("title", "").strip()
+        summary = data.get("summary", "").strip()
+        body_text = data.get("body_text", "").strip()
+        if not (title or summary or body_text):
+            continue
 
-        text_content = f"Tiêu đề: {title}\nTóm tắt: {summary}\nNội dung: {body}"
-        chunks = chunk_text(text_content)
+        category = str(data.get("category") or "").strip()
+        doc_type = str(data.get("doc_type") or "").strip()
 
-        for c in chunks:
-            all_data.append({
-                "doc_id": data.get("doc_id", "unknown_id"),
-                "doc_type": data.get("doc_type", "unknown"),
-                "text": c,
-                "url": data.get("source_url", ""),
-                "title": title
-            })
+        text_content = f"Tiêu đề: {title}\nTóm tắt: {summary}\nNội dung: {body_text}"
+        for chunk in chunk_text(text_content):
+            all_records.append(
+                {
+                    "doc_id": str(data.get("doc_id", "unknown_id")),
+                    "doc_type": doc_type or "unknown",
+                    "category": category or "unknown",
+                    "text": chunk,
+                    "url": str(data.get("source_url", "")),
+                    "title": title,
+                }
+            )
 
-    print(f"Total chunks to embed: {len(all_data)}")
+    return all_records
 
-    # 3. Embed và Insert theo batch
-    BATCH_SIZE = 20
+
+def insert_records(client: MilvusClient, all_records: list[dict]) -> int:
     inserted_count = 0
-    for i in range(0, len(all_data), BATCH_SIZE):
-        batch = all_data[i:i + BATCH_SIZE]
+
+    for index in range(0, len(all_records), BATCH_SIZE):
+        batch = all_records[index:index + BATCH_SIZE]
         texts = [item["text"] for item in batch]
         embeddings = get_embeddings(texts)
 
-        if not embeddings or len(embeddings) != len(batch):
-            print(f"Skipping batch {i // BATCH_SIZE + 1} due to embedding failure.")
-            continue
+        if len(embeddings) != len(batch):
+            raise RuntimeError(
+                f"Embedding count mismatch ở batch {index // BATCH_SIZE + 1}: "
+                f"nhận {len(embeddings)} vector cho {len(batch)} records."
+            )
 
-        insert_data = [
-            {
-                "vector": emb,
-                "text": item["text"],
-                "url": item["url"],
-                "title": item["title"],
-                "doc_id": item["doc_id"],
-                "doc_type": item["doc_type"]
-            }
-            for item, emb in zip(batch, embeddings)
-        ]
+        insert_data = []
+        for item, embedding in zip(batch, embeddings):
+            insert_data.append(
+                {
+                    "vector": embedding,
+                    "text": item["text"],
+                    "url": item["url"],
+                    "title": item["title"],
+                    "doc_id": item["doc_id"],
+                    "doc_type": item["doc_type"],
+                    "category": item["category"],
+                }
+            )
 
-        client.insert(collection_name=collection_name, data=insert_data)
+        client.insert(collection_name=COLLECTION, data=insert_data)
         inserted_count += len(insert_data)
-        print(f"Inserted batch {i // BATCH_SIZE + 1}. Total Inserted: {inserted_count}")
+        print(f"Inserted {inserted_count}/{len(all_records)} chunks")
 
-    print(f"\nUpload to DB complete! {inserted_count}/{len(all_data)} chunks inserted.")
+    return inserted_count
+
+
+def main() -> None:
+    milvus_uri = validate_milvus_uri(MILVUS_URI)
+    client = MilvusClient(uri=milvus_uri, token=MILVUS_TOKEN)
+
+    create_collection(client)
+    print(f"Collection '{COLLECTION}' created in {milvus_uri}")
+
+    all_records = build_records()
+    print(f"Total chunks to embed: {len(all_records)}")
+
+    inserted_count = insert_records(client, all_records)
+    print(f"Upload complete: {inserted_count}/{len(all_records)} chunks inserted into Milvus Service.")
 
 
 if __name__ == "__main__":

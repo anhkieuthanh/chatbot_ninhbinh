@@ -92,6 +92,7 @@ Content-Type: application/json
 | `query` | string | ✅ | Câu hỏi hoặc từ khóa tìm kiếm |
 | `top_k` | integer | ❌ | Số kết quả trả về (mặc định: `5`, tối đa: `20`) |
 | `doc_type` | string | ❌ | Lọc theo chủ đề (xem danh sách bên dưới) |
+| `category` | string | ❌ | Lọc theo category gốc nếu cần |
 
 **Ví dụ body:**
 ```json
@@ -107,6 +108,7 @@ Content-Type: application/json
 {
   "query": "Nhà hàng hải sản ngon ở Ninh Bình",
   "doc_type_filter": "cuisine",
+  "category_filter": null,
   "total": 5,
   "results": [
     {
@@ -114,6 +116,7 @@ Content-Type: application/json
       "url": "https://...",
       "doc_id": "abc123",
       "doc_type": "cuisine",
+      "category": "Ẩm thực",
       "score": 0.8921,
       "text_preview": "Nhà hàng Hoa Lư nổi tiếng với các món đặc sản..."
     }
@@ -129,6 +132,7 @@ Content-Type: application/json
 | `url` | Link nguồn gốc |
 | `doc_id` | ID tài liệu trong database |
 | `doc_type` | Chủ đề của tài liệu |
+| `category` | Nhãn category gốc trong dữ liệu |
 | `score` | Điểm tương đồng (0–1, càng cao càng liên quan) |
 | `text_preview` | Đoạn trích nội dung (tối đa 400 ký tự) |
 

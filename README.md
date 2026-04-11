@@ -11,7 +11,7 @@ Dữ liệu được crawl từ [dulichninhbinh.com.vn](https://dulichninhbinh.c
 chatbot/
 ├── .env              # API key (không commit lên git)
 ├── raw_data/         # Dữ liệu JSON thô đã crawl (181 bài viết)
-│   ├── cuisine/
+│   ├── food/
 │   ├── destination/
 │   ├── entertainment/
 │   └── ...
@@ -122,6 +122,7 @@ Tìm kiếm ngữ nghĩa trong cơ sở dữ liệu du lịch Ninh Bình.
 | `query`     | string        | bắt buộc | Câu hỏi hoặc từ khóa tìm kiếm                 |
 | `top_k`     | int           | `5`      | Số lượng kết quả trả về (tối đa 20)            |
 | `doc_type`  | string / null | `null`   | Lọc kết quả theo chủ đề (xem bảng bên dưới)   |
+| `category`  | string / null | `null`   | Lọc theo category gốc trong dữ liệu nếu cần   |
 
 **Tìm kiếm toàn bộ (không filter):**
 
@@ -145,12 +146,14 @@ curl -X POST http://localhost:8000/search \
 {
   "query": "đặc sản ẩm thực nổi tiếng ở Ninh Bình",
   "doc_type_filter": "cuisine",
+  "category_filter": null,
   "results": [
     {
       "title": "Nem Dê Ninh Bình – Hương vị truyền thống vùng Cố Đô",
       "url": "https://dulichninhbinh.com.vn/item/3385",
       "doc_id": "doc_b932edd57dfc82cf",
       "doc_type": "cuisine",
+      "category": "Ẩm thực",
       "score": 0.5091,
       "text_preview": "đặc sản khác như cơm cháy, miến lươn, mắm tép Gia Viễn..."
     }

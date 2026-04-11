@@ -22,7 +22,7 @@ raw_data/**/*.json
   [Bước 4] Insert vào Milvus Service DB
        │  vector + metadata → Milvus Service
        ▼
-  Milvus Service → collection: ninhbinh_kb (596 records)
+  Milvus Service → collection: ninhbinh_kb
 ```
 
 ---
@@ -39,12 +39,23 @@ client = MilvusClient(uri=MILVUS_URI, token=MILVUS_TOKEN)
 if client.has_collection("ninhbinh_kb"):
     client.drop_collection("ninhbinh_kb")   # Xóa cũ nếu đã tồn tại
 
+schema = client.create_schema(auto_id=True, enable_dynamic_field=False)
+schema.add_field(field_name="id", datatype=DataType.INT64, is_primary=True)
+schema.add_field(field_name="vector", datatype=DataType.FLOAT_VECTOR, dim=1024)
+schema.add_field(field_name="text", datatype=DataType.VARCHAR, max_length=8192)
+schema.add_field(field_name="url", datatype=DataType.VARCHAR, max_length=2048)
+schema.add_field(field_name="title", datatype=DataType.VARCHAR, max_length=1024)
+schema.add_field(field_name="doc_id", datatype=DataType.VARCHAR, max_length=255)
+schema.add_field(field_name="doc_type", datatype=DataType.VARCHAR, max_length=100)
+schema.add_field(field_name="category", datatype=DataType.VARCHAR, max_length=255)
+
+index_params = client.prepare_index_params()
+index_params.add_index(field_name="vector", index_type="AUTOINDEX", metric_type="COSINE")
+
 client.create_collection(
     collection_name="ninhbinh_kb",
-    dimension=1024,           # Khớp với output dim của NVIDIA model
-    metric_type="COSINE",     # Đo độ tương đồng bằng góc Cosine
-    auto_id=True,             # ID tự tăng
-    enable_dynamic_field=True # Cho phép lưu thêm metadata tùy ý
+    schema=schema,
+    index_params=index_params
 )
 ```
 
@@ -249,8 +260,9 @@ client.insert(collection_name="ninhbinh_kb", data=insert_data)
 | `url` | string | URL nguồn |
 | `doc_id` | string | ID định danh bài gốc |
 | `doc_type` | string | Loại nội dung (dùng để filter) |
+| `category` | string | Category gốc đọc từ dữ liệu nguồn |
 
-> `id` và `vector` là **schema cố định** khi tạo collection. Các trường còn lại được lưu nhờ `enable_dynamic_field=True`.
+> `id`, `vector` và các metadata chính hiện được khai báo tường minh trong schema để API và pipeline luôn đồng bộ.
 
 ---
 
@@ -260,7 +272,7 @@ client.insert(collection_name="ninhbinh_kb", data=insert_data)
 181 file JSON
   └─ 596 chunks (sentence-aware, max 800 ký tự, overlap 150 ký tự)
        └─ 596 vectors (1024 chiều, model: nvidia/nv-embedqa-e5-v5)
-           └─ 596 records trong collection ninhbinh_kb (Milvus Service)
+           └─ records trong collection ninhbinh_kb (Milvus Service)
 ```
 
 ---
